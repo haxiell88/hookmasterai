@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HookMaster AI</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = { darkMode: 'class', theme: { extend: { colors: { slate: { 850: '#151f32', 950: '#020617' } }, fontFamily: { sans: ['Inter', 'sans-serif'] } } } }
+    </script>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&display=swap" rel="stylesheet">
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        .emoji-icon { display: inline-block; transform: translateY(-1px); margin-right: 6px; filter: grayscale(100%); opacity: 0.7; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
+        .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; }
+        .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
+        @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+    </style>
+</head>
+<body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans antialiased transition-colors duration-200">
+    <div id="root"></div>
+    <script type="text/babel">
+        const { useState, useEffect, useRef } = React;
+        const Icon = ({ c }) => <span className="emoji-icon">{c}</span>;
+
+        function App() {
+            const [activeTab, setActiveTab] = useState('generator');
+            const [darkMode, setDarkMode] = useState(() => localStorage.getItem('hookmaster_theme') === 'dark');
+            const [provider, setProvider] = useState(() => localStorage.getItem('hm_provider') || 'gemini');
+            const [apiKey, setApiKey] = useState(() => localStorage.getItem('hm_api_key') || '');
+            const [aiModel, setAiModel] = useState(() => localStorage.getItem('hm_ai_model') || 'gemini-2.5-flash-lite');
+            const [isSettingsOpen, setIsSettingsOpen] = useState(!localStorage.getItem('hm_api_key'));
+            const [formData, setFormData] = useState({ topic: '', audience: '', pain: '', goal: '', keyword: '', platform: 'TikTok / Reels', vibe: 'Santai', language: 'Indonesia' });
+            const [generatedHooks, setGeneratedHooks] = useState([]);
+            const [isGenerating, setIsGenerating] = useState(false);
+            const [savedHooks, setSavedHooks] = useState(() => JSON.parse(localStorage.getItem('saved_hooks') || '[]'));
+            const [savedPersonas, setSavedPersonas] = useState(() => JSON.parse(localStorage.getItem('saved_personas') || '[]'));
+            const [showPersonaMenu, setShowPersonaMenu] = useState(false);
+            const [quickSaveModal, setQuickSaveModal] = useState(false);
+            const [imageFile, setImageFile] = useState(null);
+            const [imagePreview, setImagePreview] = useState(null);
+            const fileInputRef = useRef(null);
+
+            useEffect(() => {
+                localStorage.setItem('hookmaster_theme', darkMode ? 'dark' : 'light');
+                if (darkMode) document.documentElement.classList.add('dark'); else document.documentElement.classList.remove('dark');
+            }, [darkMode]);
+            useEffect(() => localStorage.setItem('saved_hooks', JSON.stringify(savedHooks)), [savedHooks]);
+            useEffect(() => localStorage.setItem('saved_personas', JSON.stringify(savedPersonas)), [savedPersonas]);
+
+            const parseAIResponse = (text) => {
+                if (!text) return null;
+                try {
+                    let clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
+                    const start = clean.indexOf('['); const end = clean.lastIndexOf(']');
+                    if(start >= 0 && end >= 0) return JSON.parse(clean.substring(start, end+1));
+                    return JSON.parse(clean);
+                } catch (e) { return null; }
+            };
+
+            const callAI = async () => {
+                if (!apiKey) { setIsSettingsOpen(true); return; }
+                setIsGenerating(true); setGeneratedHooks([]);
+                const prompt = `Buat 5 hook viral untuk ${formData.platform}. Topik: ${formData.topic}, Target: ${formData.audience}. OUTPUT JSON ARRAY: [{"category":"Jenis","tone":"Tone","text":"Hook text","hashtags":["#tag"]}]`;
+                try {
+                    const url = `https://generativelanguage.googleapis.com/v1beta/models/${aiModel}:generateContent?key=${apiKey}`;
+                    const res = await fetch(url, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                    });
+                    const data = await res.json();
+                    if (data.error) throw new Error(data.error.message);
+                    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                    const json = parseAIResponse(raw);
+                    if (json) setGeneratedHooks(json.map((h, i) => ({ ...h, id: Date.now() + i })));
+                } catch (err) { alert("Error: " + err.message); } finally { setIsGenerating(false); }
+            };
+
+            const saveSettings = (e) => {
+                e.preventDefault();
+                const p = e.target.provider.value; const k = e.target.apiKey.value.trim(); const m = e.target.model.value;
+                setProvider(p); setApiKey(k); setAiModel(m);
+                localStorage.setItem('hm_provider', p); localStorage.setItem('hm_api_key', k); localStorage.setItem('hm_ai_model', m);
+                setIsSettingsOpen(false); alert("Tersimpan!");
+            };
+
+            return (
+                <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 pb-20 transition-colors">
+                    <header className="bg-white/80 dark:bg-slate-900/80 backdrop-blur border-b sticky top-0 z-40 px-4 py-3 flex justify-between items-center">
+                        <div className="flex items-center gap-2">
+                            <img src={darkMode ? "logo%20W.png" : "logo%20B.png"} className="h-8" alt="Logo" onError={(e) => e.target.style.display='none'}/>
+                            <h1 className="font-bold text-lg">HookMaster</h1>
+                        </div>
+                        <div className="flex gap-2">
+                            <button onClick={() => setIsSettingsOpen(true)} className="p-2 bg-slate-100 dark:bg-slate-800 rounded-full border text-xs px-4 font-bold flex items-center gap-2"><Icon c="⚙️"/> Settings</button>
+                            <button onClick={() => setDarkMode(!darkMode)} className="p-2 bg-slate-100 dark:bg-slate-800 rounded-full border"><Icon c={darkMode ? "☀️" : "🌙"}/></button>
+                        </div>
+                    </header>
+
+                    {isSettingsOpen && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+                            <div className="bg-white dark:bg-slate-900 w-full max-w-md p-6 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800">
+                                <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><Icon c="⚙️"/> Pengaturan</h3>
+                                <form onSubmit={saveSettings} className="space-y-4">
+                                    <div><label className="block text-xs font-bold text-slate-400 mb-1">PROVIDER</label>
+                                        <select name="provider" defaultValue={provider} className="w-full p-3 border rounded-xl dark:bg-slate-800 text-sm"><option value="gemini">Google Gemini</option></select>
+                                    </div>
+                                    <div><label className="block text-xs font-bold text-slate-400 mb-1">MODEL</label>
+                                        <select name="model" defaultValue={aiModel} className="w-full p-3 border rounded-xl dark:bg-slate-800 text-sm">
+                                            <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite (0/20)</option>
+                                            <option value="gemini-3-flash">Gemini 3.0 Flash (0/20)</option>
+                                            <option value="gemini-2.5-flash">Gemini 2.5 Flash (Limit)</option>
+                                        </select>
+                                    </div>
+                                    <div><label className="block text-xs font-bold text-slate-400 mb-1">API KEY</label>
+                                        <input name="apiKey" defaultValue={apiKey} placeholder="Paste Key..." className="w-full p-3 border rounded-xl dark:bg-slate-800 text-sm font-mono" required />
+                                    </div>
+                                    <div className="flex gap-2"><button type="button" onClick={()=>setIsSettingsOpen(false)} className="flex-1 py-2 border rounded-xl font-bold text-sm">Batal</button>
+                                    <button type="submit" className="flex-1 py-2 bg-blue-600 text-white rounded-xl font-bold text-sm">Simpan</button></div>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
+                    <main className="max-w-xl mx-auto px-4 py-8">
+                        <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border shadow-xl space-y-4">
+                            <h2 className="font-bold text-xl flex items-center gap-2"><Icon c="✨"/> Buat Hook Viral</h2>
+                            <div><label className="text-[10px] font-bold text-slate-400">TOPIK KONTEN</label>
+                            <input value={formData.topic} onChange={e=>setFormData({...formData, topic:e.target.value})} className="w-full p-3 rounded-2xl border dark:bg-slate-800 outline-none focus:ring-2 focus:ring-blue-500" placeholder="Misal: Cara dapet API Key gratis..."/></div>
+                            <div className="grid grid-cols-2 gap-3">
+                                <div><label className="text-[10px] font-bold text-slate-400">TARGET AUDIENS</label><input value={formData.audience} onChange={e=>setFormData({...formData, audience:e.target.value})} className="w-full p-3 border rounded-xl dark:bg-slate-800 text-sm"/></div>
+                                <div><label className="text-[10px] font-bold text-slate-400">KEYWORD SEO</label><input value={formData.keyword} onChange={e=>setFormData({...formData, keyword:e.target.value})} className="w-full p-3 border rounded-xl dark:bg-slate-800 text-sm"/></div>
+                            </div>
+                            <button onClick={callAI} disabled={isGenerating || !formData.topic} className="w-full bg-slate-900 dark:bg-blue-600 text-white py-4 rounded-2xl font-bold text-lg hover:opacity-90 disabled:opacity-50 transition-all flex justify-center items-center gap-3 shadow-lg shadow-blue-500/20">
+                                {isGenerating ? "Menganalisa..." : <><Icon c="🚀"/> Generate Sekarang</>}
+                            </button>
+                        </div>
+
+                        {generatedHooks.length > 0 && (
+                            <div className="mt-8 space-y-4 animate-fade-in">
+                                <h3 className="font-bold text-lg px-2">Saran Hook Viral</h3>
+                                {generatedHooks.map((h, i) => (
+                                    <div key={h.id} className="bg-white dark:bg-slate-900 p-5 rounded-2xl border hover:border-blue-400 transition-all shadow-sm">
+                                        <div className="flex justify-between mb-2"><span className="text-[10px] font-bold bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-2 py-1 rounded uppercase tracking-wider">{h.category}</span></div>
+                                        <p className="font-medium text-lg italic">"{h.text}"</p>
+                                        <div className="flex justify-end gap-2 mt-4 pt-3 border-t">
+                                            <button onClick={()=>navigator.clipboard.writeText(h.text)} className="text-xs font-bold text-slate-400 hover:text-blue-500 flex items-center gap-1"><Icon c="📋"/> Salin</button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+                    </main>
+                </div>
+            );
+        }
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
