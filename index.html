@@ -29,6 +29,13 @@
         const { useState, useEffect, useRef } = React;
         const Icon = ({ c }) => <span className="emoji-icon">{c}</span>;
 
+        // Komponen Logo Thunder Minimalis
+        const ThunderLogo = () => (
+            <svg viewBox="0 0 24 24" fill="currentColor" className="w-8 h-8 text-slate-900 dark:text-white">
+                <path d="M13 2L3 14H12L11 22L21 10H12L13 2Z" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+        );
+
         function App() {
             // --- CORE STATE ---
             const [activeTab, setActiveTab] = useState('generator');
@@ -55,7 +62,7 @@
             const [ideaType, setIdeaType] = useState('Edukasi');
             const [generatedIdeas, setGeneratedIdeas] = useState([]);
             
-            // --- VOICE GUIDE STATE (NEW) ---
+            // --- VOICE GUIDE STATE ---
             const [voiceInput, setVoiceInput] = useState('');
             const [voiceResult, setVoiceResult] = useState([]);
             const [isAnalyzingVoice, setIsAnalyzingVoice] = useState(false);
@@ -170,6 +177,8 @@
                 else if(type === 'Carousel') title = 'Slide Carousel';
                 else if(type === 'Analisa') title = 'Viral Meter';
                 else if(type === 'Visual') title = 'Visual Director';
+                else if(type === 'Remix') title = 'Hasil Remix';
+                else if(type === 'Repurpose') title = 'Repurpose';
                 
                 setModal({ isOpen: true, type, title, loading: true, content: '' });
                 
@@ -199,11 +208,18 @@
             const filteredHooks = savedHooks.filter(h => (h.text || '').toLowerCase().includes(searchSaved.toLowerCase()));
             const filteredPersonas = savedPersonas.filter(p => (p.name || '').toLowerCase().includes(searchPersonas.toLowerCase()));
             const filteredCalendar = savedHooks.filter(h => h.scheduledDate).filter(h => (h.text || '').toLowerCase().includes(searchCalendar.toLowerCase()));
-            const faqFiltered = [
-                { q: "Apa fungsi Voice Guide?", a: "Membantu Anda membaca naskah dengan intonasi yang tepat agar tidak terdengar kaku atau seperti robot." },
-                { q: "Cara pakai Groq?", a: "Masuk ke Settings (⚙️), pilih Provider Groq, masukkan API Key Groq Anda, dan pilih model Llama." },
-                { q: "Data saya aman?", a: "Ya, data tersimpan di browser Anda (Local Storage), bukan di server kami." }
-            ].filter(f => f.q.toLowerCase().includes(searchFAQ.toLowerCase()));
+            
+            // --- NEW FAQ DATA ---
+            const faqData = [
+                { q: "Apa itu API Key & Bagaimana cara dapatnya?", a: "API Key adalah kode khusus agar aplikasi bisa 'berbicara' dengan otak AI. Klik tombol 'Dapatkan Key' di menu Settings sesuai provider yang Anda pilih (Google atau Groq). Gratis!" },
+                { q: "Apa beda Google Gemini vs Groq?", a: "Gemini (Google) lebih kreatif, pintar, dan stabil untuk bahasa Indonesia. Groq (Llama 3) sangat cepat (super ngebut) tapi kuota gratisnya lebih cepat habis per menit." },
+                { q: "Kenapa muncul error 'Quota Exceeded'?", a: "Artinya jatah gratis harian/menitan dari Google/Groq sudah habis. Solusi: Ganti model di Settings (misal dari Flash ke Flash-Lite) atau ganti Provider." },
+                { q: "Apakah data saya aman?", a: "Sangat aman! Creator Suite tidak punya server database. Semua hook, persona, dan jadwal tersimpan di memori browser (Local Storage) laptop/HP Anda sendiri." },
+                { q: "Bagaimana cara agar hasil lebih bagus?", a: "Isi kolom 'Target Audiens', 'Pain', dan 'Goal' sejelas mungkin. Semakin detail konteks yang Anda beri, semakin tajam hook yang dibuat AI." },
+                { q: "Fitur 'Voice Guide' itu untuk apa?", a: "Untuk membantu Anda saat rekaman (voice over). Paste naskah Anda, dan AI akan memberi tanda kapan harus nada naik, turun, atau menekan kata tertentu." },
+                { q: "Bisakah untuk Bahasa selain Indonesia?", a: "Bisa! Cukup ganti pengaturan 'Bahasa' di formulir generator menjadi English, Jawa, atau Jaksel." }
+            ];
+            const faqFiltered = faqData.filter(f => f.q.toLowerCase().includes(searchFAQ.toLowerCase()));
 
             // --- RENDER ---
             return (
@@ -212,7 +228,7 @@
                     {/* HEADER */}
                     <header className="bg-white/90 dark:bg-slate-900/90 backdrop-blur border-b dark:border-slate-800 sticky top-0 z-40 px-4 py-3 flex justify-between items-center shadow-sm">
                         <div className="flex items-center gap-3">
-                            <div className="bg-blue-600 text-white p-1.5 rounded-lg font-black text-xs">CS</div>
+                            <ThunderLogo />
                             <div><h1 className="font-black text-lg leading-none tracking-tight">Creator Suite</h1><span className="text-[9px] font-bold text-slate-400 tracking-widest">AI POWERED</span></div>
                         </div>
                         <div className="flex gap-2">
@@ -235,8 +251,18 @@
                                             {provider === 'gemini' ? <><option value="gemini-1.5-flash-lite">Gemini 1.5 Flash Lite</option><option value="gemini-3.0-flash">Gemini 3.0 Flash</option><option value="gemini-1.5-flash">Gemini 1.5 Flash</option></> : <><option value="llama-3.3-70b-versatile">Llama 3.3 70B (Best)</option><option value="llama-3.1-8b-instant">Llama 3.1 8B (Fast)</option></>}
                                         </select>
                                     </div>
-                                    <div><label className="text-[10px] font-bold text-slate-400 block mb-1">API KEY</label><input name="apiKey" defaultValue={apiKey} className="w-full p-2.5 border rounded-xl dark:bg-slate-800 text-sm font-mono" placeholder="Paste Key Here..." required /></div>
-                                    <div className="flex gap-2 pt-2"><button type="button" onClick={()=>setIsSettingsOpen(false)} className="flex-1 py-2.5 border rounded-xl font-bold text-xs">BATAL</button><button type="submit" className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-xs">SIMPAN</button></div>
+                                    <div>
+                                        <label className="text-[10px] font-bold text-slate-400 block mb-1">API KEY</label>
+                                        <input name="apiKey" defaultValue={apiKey} className="w-full p-2.5 border rounded-xl dark:bg-slate-800 text-sm font-mono mb-2" placeholder="Paste Key Here..." required />
+                                        
+                                        {/* TOMBOL TUTORIAL GET API KEY */}
+                                        {provider === 'gemini' ? (
+                                            <a href="https://aistudio.google.com/app/apikey" target="_blank" className="block w-full text-center bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 py-2 rounded-xl text-xs font-bold border border-blue-100 dark:border-blue-800 hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors">👉 Dapatkan API Key Gemini (Gratis)</a>
+                                        ) : (
+                                            <a href="https://console.groq.com/keys" target="_blank" className="block w-full text-center bg-orange-50 dark:bg-orange-900/30 text-orange-600 dark:text-orange-400 py-2 rounded-xl text-xs font-bold border border-orange-100 dark:border-orange-800 hover:bg-orange-100 dark:hover:bg-orange-900/50 transition-colors">👉 Dapatkan API Key Groq (Gratis)</a>
+                                        )}
+                                    </div>
+                                    <div className="flex gap-2 pt-2"><button type="button" onClick={()=>setIsSettingsOpen(false)} className="flex-1 py-2.5 border rounded-xl font-bold text-xs">BATAL</button><button type="submit" className="flex-1 py-2.5 bg-slate-900 dark:bg-blue-600 text-white rounded-xl font-bold text-xs">SIMPAN</button></div>
                                 </form>
                             </div>
                         </div>
@@ -307,7 +333,7 @@
                             </div>
                         )}
 
-                        {/* TAB VOICE GUIDE (NEW) */}
+                        {/* TAB VOICE GUIDE */}
                         {activeTab === 'voice' && (
                             <div className="animate-fade-in space-y-6">
                                 <div className="text-center py-8">
@@ -374,7 +400,7 @@
                             </div>
                         )}
 
-                        {/* TAB KOLEKSI, PERSONA, JADWAL, FAQ (Standard Layouts) */}
+                        {/* TAB KOLEKSI */}
                         {activeTab === 'koleksi' && (
                             <div className="animate-fade-in space-y-4">
                                 <div className="relative mb-6"><span className="absolute left-4 top-3.5 text-slate-400"><Icon c="🔍"/></span><input value={searchSaved} onChange={e=>setSearchSaved(e.target.value)} placeholder="Cari koleksi..." className="w-full pl-11 pr-4 py-3.5 rounded-2xl border dark:bg-slate-900 outline-none shadow-sm focus:ring-1 focus:ring-blue-500 font-medium text-sm"/></div>
@@ -388,6 +414,10 @@
                                         <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800/50 p-2 rounded-xl">
                                             <label className="text-[9px] font-black text-slate-400 ml-1">JADWAL:</label>
                                             <input type="date" value={h.scheduledDate || ''} onChange={(e)=>setSavedHooks(savedHooks.map(sh => sh.id === h.id ? {...sh, scheduledDate: e.target.value} : sh))} className="bg-white dark:bg-slate-900 border text-[10px] font-black rounded px-2 py-1 outline-none"/>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                                            <button onClick={()=>handleFeature('Expand', h.text)} className="text-[10px] font-bold text-blue-600 hover:underline">Expand</button>
+                                            <button onClick={()=>handleFeature('Carousel', h.text)} className="text-[10px] font-bold text-blue-600 hover:underline">Carousel</button>
                                         </div>
                                     </div>
                                 ))}
