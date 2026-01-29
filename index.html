@@ -14,39 +14,52 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <style>
         .emoji-icon { display: inline-block; transform: translateY(-1px); margin-right: 6px; filter: grayscale(100%); opacity: 0.7; }
-        .custom-scrollbar::-webkit-scrollbar { width: 6px; }
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 10px; }
         .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; }
         .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+        .faq-content { transition: max-height 0.3s ease-out, opacity 0.3s ease-out; max-height: 0; opacity: 0; overflow: hidden; }
+        .faq-content.open { max-height: 1000px; opacity: 1; }
     </style>
 </head>
 <body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans antialiased transition-colors duration-200">
     <div id="root"></div>
     <script type="text/babel">
-        const { useState, useEffect, useRef } = React;
+        const { useState, useEffect, useRef, useMemo } = React;
         const Icon = ({ c }) => <span className="emoji-icon">{c}</span>;
 
         function App() {
             const [activeTab, setActiveTab] = useState('generator');
-            const [darkMode, setDarkMode] = useState(() => localStorage.getItem('hookmaster_theme') === 'dark');
+            const [darkMode, setDarkMode] = useState(() => localStorage.getItem('hm_theme') === 'dark');
             const [provider, setProvider] = useState(() => localStorage.getItem('hm_provider') || 'gemini');
             const [apiKey, setApiKey] = useState(() => localStorage.getItem('hm_api_key') || '');
-            const [aiModel, setAiModel] = useState(() => localStorage.getItem('hm_ai_model') || 'gemini-2.5-flash-lite');
+            const [aiModel, setAiModel] = useState(() => localStorage.getItem('hm_ai_model') || 'gemini-1.5-flash-lite');
             const [isSettingsOpen, setIsSettingsOpen] = useState(!localStorage.getItem('hm_api_key'));
+
+            // Data States
             const [formData, setFormData] = useState({ topic: '', audience: '', pain: '', goal: '', keyword: '', platform: 'TikTok / Reels', vibe: 'Santai', language: 'Indonesia' });
             const [generatedHooks, setGeneratedHooks] = useState([]);
             const [isGenerating, setIsGenerating] = useState(false);
             const [savedHooks, setSavedHooks] = useState(() => JSON.parse(localStorage.getItem('saved_hooks') || '[]'));
             const [savedPersonas, setSavedPersonas] = useState(() => JSON.parse(localStorage.getItem('saved_personas') || '[]'));
-            const [showPersonaMenu, setShowPersonaMenu] = useState(false);
-            const [quickSaveModal, setQuickSaveModal] = useState(false);
+            
+            // Search States
+            const [searchSaved, setSearchSaved] = useState('');
+            const [searchPersonas, setSearchPersonas] = useState('');
+            const [searchCalendar, setSearchCalendar] = useState('');
+            const [searchFAQ, setSearchFAQ] = useState('');
+
+            // UI
             const [imageFile, setImageFile] = useState(null);
             const [imagePreview, setImagePreview] = useState(null);
+            const [showPersonaMenu, setShowPersonaMenu] = useState(false);
+            const [quickSaveModal, setQuickSaveModal] = useState(false);
+            const [openFaqIndex, setOpenFaqIndex] = useState(null);
             const fileInputRef = useRef(null);
 
             useEffect(() => {
-                localStorage.setItem('hookmaster_theme', darkMode ? 'dark' : 'light');
+                localStorage.setItem('hm_theme', darkMode ? 'dark' : 'light');
                 if (darkMode) document.documentElement.classList.add('dark'); else document.documentElement.classList.remove('dark');
             }, [darkMode]);
             useEffect(() => localStorage.setItem('saved_hooks', JSON.stringify(savedHooks)), [savedHooks]);
@@ -62,20 +75,39 @@
                 } catch (e) { return null; }
             };
 
-            const callAI = async () => {
+            const callAI = async (promptOverride = null) => {
                 if (!apiKey) { setIsSettingsOpen(true); return; }
                 setIsGenerating(true); setGeneratedHooks([]);
-                const prompt = `Buat 5 hook viral untuk ${formData.platform}. Topik: ${formData.topic}, Target: ${formData.audience}. OUTPUT JSON ARRAY: [{"category":"Jenis","tone":"Tone","text":"Hook text","hashtags":["#tag"]}]`;
+                const prompt = promptOverride || `Bertindak sebagai Copywriter. Buat 5 hook viral untuk ${formData.platform}. Topik: ${formData.topic}, Target: ${formData.audience}, Pain: ${formData.pain}, Keyword SEO: ${formData.keyword}. Gaya: ${formData.vibe}. OUTPUT JSON ARRAY: [{"category":"Jenis","tone":"Tone","text":"Hook text","hashtags":["#tag"]}]`;
+                
                 try {
-                    const url = `https://generativelanguage.googleapis.com/v1beta/models/${aiModel}:generateContent?key=${apiKey}`;
-                    const res = await fetch(url, {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
-                    });
-                    const data = await res.json();
-                    if (data.error) throw new Error(data.error.message);
-                    const raw = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                    let res, data, raw;
+                    if (provider === 'gemini') {
+                        const url = `https://generativelanguage.googleapis.com/v1beta/models/${aiModel}:generateContent?key=${apiKey}`;
+                        res = await fetch(url, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] })
+                        });
+                        data = await res.json();
+                        if (data.error) throw new Error(data.error.message);
+                        raw = data.candidates?.[0]?.content?.parts?.[0]?.text;
+                    } else {
+                        // GROQ PROVIDER
+                        const url = `https://api.groq.com/openai/v1/chat/completions`;
+                        res = await fetch(url, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` },
+                            body: JSON.stringify({ 
+                                model: aiModel, 
+                                messages: [{ role: "user", content: prompt }],
+                                response_format: { type: "json_object" }
+                            })
+                        });
+                        data = await res.json();
+                        if (data.error) throw new Error(data.error.message);
+                        raw = data.choices?.[0]?.message?.content;
+                    }
                     const json = parseAIResponse(raw);
                     if (json) setGeneratedHooks(json.map((h, i) => ({ ...h, id: Date.now() + i })));
                 } catch (err) { alert("Error: " + err.message); } finally { setIsGenerating(false); }
@@ -86,18 +118,27 @@
                 const p = e.target.provider.value; const k = e.target.apiKey.value.trim(); const m = e.target.model.value;
                 setProvider(p); setApiKey(k); setAiModel(m);
                 localStorage.setItem('hm_provider', p); localStorage.setItem('hm_api_key', k); localStorage.setItem('hm_ai_model', m);
-                setIsSettingsOpen(false); alert("Tersimpan!");
+                setIsSettingsOpen(false); alert("Pengaturan tersimpan!");
             };
 
+            // Filtered Lists
+            const filteredHooks = savedHooks.filter(h => h.text.toLowerCase().includes(searchSaved.toLowerCase()));
+            const filteredPersonas = savedPersonas.filter(p => p.name.toLowerCase().includes(searchPersonas.toLowerCase()));
+            const faqFiltered = [
+                { q: "Apa itu HookMaster AI?", a: "Asisten konten cerdas untuk riset ide dan pembuatan hook viral." },
+                { q: "Cara ganti Provider?", a: "Klik Settings (⚙️). Masukkan API Key Google Gemini atau Groq sesuai kebutuhan." },
+                { q: "Data Aman?", a: "Ya, semua data tersimpan di browser Anda (Local Storage), bukan di server kami." }
+            ].filter(f => f.q.toLowerCase().includes(searchFAQ.toLowerCase()));
+
             return (
-                <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 pb-20 transition-colors">
+                <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 pb-20 transition-colors font-sans">
                     <header className="bg-white/80 dark:bg-slate-900/80 backdrop-blur border-b sticky top-0 z-40 px-4 py-3 flex justify-between items-center">
                         <div className="flex items-center gap-2">
                             <img src={darkMode ? "logo%20W.png" : "logo%20B.png"} className="h-8" alt="Logo" onError={(e) => e.target.style.display='none'}/>
                             <h1 className="font-bold text-lg">HookMaster</h1>
                         </div>
                         <div className="flex gap-2">
-                            <button onClick={() => setIsSettingsOpen(true)} className="p-2 bg-slate-100 dark:bg-slate-800 rounded-full border text-xs px-4 font-bold flex items-center gap-2"><Icon c="⚙️"/> Settings</button>
+                            <button onClick={() => setIsSettingsOpen(true)} className="p-2 bg-slate-100 dark:bg-slate-800 rounded-full border text-xs px-4 font-bold flex items-center gap-2"><Icon c="⚙️"/> {provider.toUpperCase()}</button>
                             <button onClick={() => setDarkMode(!darkMode)} className="p-2 bg-slate-100 dark:bg-slate-800 rounded-full border"><Icon c={darkMode ? "☀️" : "🌙"}/></button>
                         </div>
                     </header>
@@ -105,16 +146,27 @@
                     {isSettingsOpen && (
                         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
                             <div className="bg-white dark:bg-slate-900 w-full max-w-md p-6 rounded-2xl shadow-2xl border border-slate-200 dark:border-slate-800">
-                                <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><Icon c="⚙️"/> Pengaturan</h3>
+                                <h3 className="font-bold text-lg mb-4 flex items-center gap-2"><Icon c="⚙️"/> Pengaturan API</h3>
                                 <form onSubmit={saveSettings} className="space-y-4">
                                     <div><label className="block text-xs font-bold text-slate-400 mb-1">PROVIDER</label>
-                                        <select name="provider" defaultValue={provider} className="w-full p-3 border rounded-xl dark:bg-slate-800 text-sm"><option value="gemini">Google Gemini</option></select>
+                                        <select name="provider" defaultValue={provider} onChange={(e)=>setProvider(e.target.value)} className="w-full p-3 border rounded-xl dark:bg-slate-800 text-sm">
+                                            <option value="gemini">Google Gemini</option>
+                                            <option value="groq">Groq (Ultra Fast)</option>
+                                        </select>
                                     </div>
                                     <div><label className="block text-xs font-bold text-slate-400 mb-1">MODEL</label>
-                                        <select name="model" defaultValue={aiModel} className="w-full p-3 border rounded-xl dark:bg-slate-800 text-sm">
-                                            <option value="gemini-2.5-flash-lite">Gemini 2.5 Flash Lite (0/20)</option>
-                                            <option value="gemini-3-flash">Gemini 3.0 Flash (0/20)</option>
-                                            <option value="gemini-2.5-flash">Gemini 2.5 Flash (Limit)</option>
+                                        <select name="model" className="w-full p-3 border rounded-xl dark:bg-slate-800 text-sm">
+                                            {provider === 'gemini' ? (
+                                                <>
+                                                    <option value="gemini-1.5-flash-lite">Gemini 1.5 Flash Lite (Hemat)</option>
+                                                    <option value="gemini-3.0-flash">Gemini 3.0 Flash (Baru)</option>
+                                                </>
+                                            ) : (
+                                                <>
+                                                    <option value="llama-3.3-70b-versatile">Llama 3.3 70B (Paling Bagus)</option>
+                                                    <option value="llama-3.1-8b-instant">Llama 3.1 8B (Efisien/Cepat)</option>
+                                                </>
+                                            )}
                                         </select>
                                     </div>
                                     <div><label className="block text-xs font-bold text-slate-400 mb-1">API KEY</label>
@@ -127,35 +179,137 @@
                         </div>
                     )}
 
-                    <main className="max-w-xl mx-auto px-4 py-8">
-                        <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border shadow-xl space-y-4">
-                            <h2 className="font-bold text-xl flex items-center gap-2"><Icon c="✨"/> Buat Hook Viral</h2>
-                            <div><label className="text-[10px] font-bold text-slate-400">TOPIK KONTEN</label>
-                            <input value={formData.topic} onChange={e=>setFormData({...formData, topic:e.target.value})} className="w-full p-3 rounded-2xl border dark:bg-slate-800 outline-none focus:ring-2 focus:ring-blue-500" placeholder="Misal: Cara dapet API Key gratis..."/></div>
-                            <div className="grid grid-cols-2 gap-3">
-                                <div><label className="text-[10px] font-bold text-slate-400">TARGET AUDIENS</label><input value={formData.audience} onChange={e=>setFormData({...formData, audience:e.target.value})} className="w-full p-3 border rounded-xl dark:bg-slate-800 text-sm"/></div>
-                                <div><label className="text-[10px] font-bold text-slate-400">KEYWORD SEO</label><input value={formData.keyword} onChange={e=>setFormData({...formData, keyword:e.target.value})} className="w-full p-3 border rounded-xl dark:bg-slate-800 text-sm"/></div>
-                            </div>
-                            <button onClick={callAI} disabled={isGenerating || !formData.topic} className="w-full bg-slate-900 dark:bg-blue-600 text-white py-4 rounded-2xl font-bold text-lg hover:opacity-90 disabled:opacity-50 transition-all flex justify-center items-center gap-3 shadow-lg shadow-blue-500/20">
-                                {isGenerating ? "Menganalisa..." : <><Icon c="🚀"/> Generate Sekarang</>}
-                            </button>
-                        </div>
+                    {/* MAIN NAV */}
+                    <nav className="flex justify-center gap-1 p-4 overflow-x-auto custom-scrollbar">
+                        {['generator', 'koleksi', 'persona', 'ide', 'jadwal', 'faq'].map(t => (
+                            <button key={t} onClick={()=>setActiveTab(t)} className={`px-4 py-2 rounded-full text-xs font-bold capitalize whitespace-nowrap transition-all ${activeTab === t ? 'bg-slate-900 dark:bg-blue-600 text-white shadow-lg' : 'bg-white dark:bg-slate-800 border dark:border-slate-700 text-slate-500'}`}>{t}</button>
+                        ))}
+                    </nav>
 
-                        {generatedHooks.length > 0 && (
-                            <div className="mt-8 space-y-4 animate-fade-in">
-                                <h3 className="font-bold text-lg px-2">Saran Hook Viral</h3>
-                                {generatedHooks.map((h, i) => (
-                                    <div key={h.id} className="bg-white dark:bg-slate-900 p-5 rounded-2xl border hover:border-blue-400 transition-all shadow-sm">
-                                        <div className="flex justify-between mb-2"><span className="text-[10px] font-bold bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 px-2 py-1 rounded uppercase tracking-wider">{h.category}</span></div>
-                                        <p className="font-medium text-lg italic">"{h.text}"</p>
+                    <main className="max-w-xl mx-auto px-4 py-4">
+                        {/* TAB GENERATOR */}
+                        {activeTab === 'generator' && (
+                            <div className="animate-fade-in space-y-6">
+                                <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border shadow-xl relative">
+                                    {savedPersonas.length > 0 && (
+                                        <div className="absolute top-6 right-6">
+                                            <button onClick={()=>setShowPersonaMenu(!showPersonaMenu)} className="text-[10px] font-bold text-blue-600 flex items-center gap-1 bg-blue-50 dark:bg-blue-900/30 px-2 py-1 rounded">LOAD PERSONA <Icon c="🔽"/></button>
+                                            {showPersonaMenu && <div className="absolute right-0 top-full mt-1 bg-white dark:bg-slate-800 border rounded-xl shadow-2xl z-20 w-40 p-1">{savedPersonas.map(p=><button key={p.id} onClick={()=>{setFormData({...formData, topic:p.topic, audience:p.audience, pain:p.pain, goal:p.goal}); setShowPersonaMenu(false)}} className="w-full text-left p-2 text-[10px] hover:bg-slate-100 rounded-lg">{p.name}</button>)}</div>}
+                                        </div>
+                                    )}
+                                    <h2 className="font-bold text-xl mb-4 flex items-center gap-2"><Icon c="✨"/> Input Konteks</h2>
+                                    <div className="space-y-4">
+                                        <input value={formData.topic} onChange={e=>setFormData({...formData, topic:e.target.value})} className="w-full p-3 rounded-2xl border dark:bg-slate-800 outline-none focus:ring-2 focus:ring-blue-500" placeholder="Topik Konten..."/>
+                                        <input value={formData.keyword} onChange={e=>setFormData({...formData, keyword:e.target.value})} className="w-full p-3 rounded-2xl border dark:bg-slate-800 text-sm" placeholder="Keyword SEO..."/>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <input value={formData.audience} onChange={e=>setFormData({...formData, audience:e.target.value})} placeholder="Target Audiens" className="w-full p-3 border rounded-xl dark:bg-slate-800 text-sm"/>
+                                            <input value={formData.pain} onChange={e=>setFormData({...formData, pain:e.target.value})} placeholder="Pain Point" className="w-full p-3 border rounded-xl dark:bg-slate-800 text-sm"/>
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <select value={formData.vibe} onChange={e=>setFormData({...formData, vibe:e.target.value})} className="p-3 border rounded-xl dark:bg-slate-800 text-sm"><option>Santai</option><option>Profesional</option><option>Kontroversial</option><option>Storytelling</option><option>Random</option></select>
+                                            <select value={formData.language} onChange={e=>setFormData({...formData, language:e.target.value})} className="p-3 border rounded-xl dark:bg-slate-800 text-sm"><option>Indonesia</option><option>English</option><option>Jaksel</option><option>Jawa-Indo</option></select>
+                                        </div>
+                                        <div className="flex gap-2">
+                                            <button onClick={()=>callAI()} disabled={isGenerating || !formData.topic} className="flex-1 bg-slate-900 dark:bg-blue-600 text-white py-4 rounded-2xl font-bold shadow-lg disabled:opacity-50">{isGenerating ? "Menganalisa..." : "Generate Hook"}</button>
+                                            <button onClick={()=>setQuickSaveModal(true)} className="p-4 border rounded-2xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"><Icon c="💾"/></button>
+                                        </div>
+                                    </div>
+                                </div>
+                                {generatedHooks.map(h => (
+                                    <div key={h.id} className="bg-white dark:bg-slate-900 p-5 rounded-2xl border hover:border-blue-400 transition-all shadow-sm group animate-fade-in">
+                                        <div className="flex justify-between mb-2"><span className="text-[10px] font-bold bg-blue-50 dark:bg-blue-900/30 text-blue-600 px-2 py-1 rounded uppercase">{h.category}</span></div>
+                                        <p className="font-medium text-lg leading-relaxed italic">"{h.text}"</p>
                                         <div className="flex justify-end gap-2 mt-4 pt-3 border-t">
-                                            <button onClick={()=>navigator.clipboard.writeText(h.text)} className="text-xs font-bold text-slate-400 hover:text-blue-500 flex items-center gap-1"><Icon c="📋"/> Salin</button>
+                                            <button onClick={()=>{setSavedHooks([{...h, savedAt: Date.now()}, ...savedHooks]); alert("Disimpan!")}} className="text-xs font-bold text-slate-400 hover:text-red-500 flex items-center gap-1"><Icon c="❤️"/> Koleksi</button>
+                                            <button onClick={()=>navigator.clipboard.writeText(h.text)} className="text-xs font-bold text-slate-400 hover:text-blue-500 flex items-center gap-1"><Icon c="📋"/> Copy</button>
                                         </div>
                                     </div>
                                 ))}
                             </div>
                         )}
+
+                        {/* TAB KOLEKSI */}
+                        {activeTab === 'koleksi' && (
+                            <div className="animate-fade-in space-y-4">
+                                <div className="relative mb-6"><span className="absolute left-3 top-3 text-slate-400"><Icon c="🔍"/></span><input value={searchSaved} onChange={e=>setSearchSaved(e.target.value)} placeholder="Cari di koleksi..." className="w-full pl-10 pr-4 py-3 rounded-2xl border dark:bg-slate-900 outline-none"/></div>
+                                {filteredHooks.length === 0 ? <p className="text-center text-slate-400 py-20">Koleksi masih kosong.</p> : filteredHooks.map(h=>(
+                                    <div key={h.id} className="bg-white dark:bg-slate-900 p-5 rounded-2xl border shadow-sm group">
+                                        <div className="flex justify-between items-start">
+                                            <div className="flex-1">
+                                                <div className="flex gap-2 mb-2"><span className="text-[10px] font-bold bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded">{h.category}</span><input type="date" value={h.scheduledDate || ''} onChange={(e)=>{setSavedHooks(savedHooks.map(sh => sh.id === h.id ? {...sh, scheduledDate: e.target.value} : sh))}} className="text-[10px] bg-blue-50 dark:bg-blue-900/30 text-blue-600 px-2 py-1 rounded outline-none border-none font-bold"/></div>
+                                                <p className="font-medium italic">"{h.text}"</p>
+                                            </div>
+                                            <button onClick={()=>setSavedHooks(savedHooks.filter(sh=>sh.id!==h.id))} className="text-red-500 hover:opacity-70 p-2"><Icon c="🗑️"/></button>
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* TAB PERSONA */}
+                        {activeTab === 'persona' && (
+                            <div className="animate-fade-in space-y-4">
+                                <div className="flex justify-between items-center mb-6">
+                                    <div className="relative flex-1 mr-4"><span className="absolute left-3 top-3 text-slate-400"><Icon c="🔍"/></span><input value={searchPersonas} onChange={e=>setSearchPersonas(e.target.value)} placeholder="Cari persona..." className="w-full pl-10 pr-4 py-3 rounded-2xl border dark:bg-slate-900 outline-none"/></div>
+                                    <button onClick={()=>setQuickSaveModal(true)} className="bg-slate-900 dark:bg-blue-600 text-white px-4 py-3 rounded-2xl font-bold shadow-lg"><Icon c="➕"/></button>
+                                </div>
+                                <div className="grid grid-cols-1 gap-4">
+                                    {filteredPersonas.map(p=>(
+                                        <div key={p.id} className="bg-white dark:bg-slate-900 p-5 rounded-2xl border flex justify-between items-center group">
+                                            <div className="flex-1" onClick={()=>{setFormData({...formData, topic:p.topic, audience:p.audience, pain:p.pain, goal:p.goal}); setActiveTab('generator')}}>
+                                                <h4 className="font-bold text-lg mb-1 group-hover:text-blue-500 cursor-pointer">{p.name}</h4>
+                                                <p className="text-xs text-slate-500">{p.audience} • {p.topic}</p>
+                                            </div>
+                                            <button onClick={()=>setSavedPersonas(savedPersonas.filter(sp=>sp.id!==p.id))} className="text-red-500 p-2"><Icon c="🗑️"/></button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </div>
+                        )}
+
+                        {/* TAB JADWAL */}
+                        {activeTab === 'jadwal' && (
+                            <div className="animate-fade-in space-y-4">
+                                <div className="relative mb-6"><span className="absolute left-3 top-3 text-slate-400"><Icon c="🔍"/></span><input value={searchCalendar} onChange={e=>setSearchCalendar(e.target.value)} placeholder="Cari di jadwal..." className="w-full pl-10 pr-4 py-3 rounded-2xl border dark:bg-slate-900 outline-none"/></div>
+                                {savedHooks.filter(h=>h.scheduledDate).sort((a,b)=>new Date(a.scheduledDate)-new Date(b.scheduledDate)).map(h=>(
+                                    <div key={h.id} className="bg-white dark:bg-slate-900 p-4 rounded-2xl border flex items-center gap-4">
+                                        <div className="bg-slate-100 dark:bg-slate-800 p-3 rounded-xl text-center min-w-[70px]"><div className="text-[10px] font-bold text-slate-400 uppercase">{new Date(h.scheduledDate).toLocaleString('id', {month:'short'})}</div><div className="text-xl font-black">{new Date(h.scheduledDate).getDate()}</div></div>
+                                        <div className="flex-1"><span className="text-[10px] font-bold bg-blue-50 text-blue-600 px-2 py-0.5 rounded">{h.category}</span><p className="text-sm font-medium italic line-clamp-2 mt-1">"{h.text}"</p></div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* TAB FAQ */}
+                        {activeTab === 'faq' && (
+                            <div className="animate-fade-in space-y-3">
+                                <div className="relative mb-6"><span className="absolute left-3 top-3 text-slate-400"><Icon c="🔍"/></span><input value={searchFAQ} onChange={e=>setSearchFAQ(e.target.value)} placeholder="Cari pertanyaan..." className="w-full pl-10 pr-4 py-3 rounded-2xl border dark:bg-slate-900 outline-none"/></div>
+                                {faqFiltered.map((f, i) => (
+                                    <div key={i} className="bg-white dark:bg-slate-900 border rounded-2xl overflow-hidden shadow-sm transition-all hover:shadow-md">
+                                        <button onClick={() => setOpenFaqIndex(openFaqIndex === i ? null : i)} className="w-full p-4 text-left font-bold flex justify-between items-center"><span>{f.q}</span><Icon c={openFaqIndex === i ? '🔼' : '🔽'}/></button>
+                                        <div className={`faq-content ${openFaqIndex === i ? 'open' : ''} px-4 pb-4 text-sm text-slate-500 leading-relaxed border-t dark:border-slate-800 pt-3`}>{f.a}</div>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </main>
+
+                    {/* QUICK SAVE PERSONA MODAL */}
+                    {quickSaveModal && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+                            <div className="bg-white dark:bg-slate-900 w-full max-w-sm p-6 rounded-2xl shadow-2xl animate-fade-in text-center">
+                                <div className="text-4xl mb-4 grayscale opacity-50"><Icon c="💾"/></div>
+                                <h3 className="font-bold text-lg mb-2">Simpan Persona?</h3>
+                                <form onSubmit={handleQuickSavePersona} className="space-y-4">
+                                    <input name="personaName" placeholder="Nama Profil (Cth: Klien Skincare)" className="w-full p-3 border rounded-xl dark:bg-slate-800 text-center font-bold" autoFocus required />
+                                    <div className="flex gap-2">
+                                        <button type="button" onClick={() => setQuickSaveModal(false)} className="flex-1 py-2 bg-slate-100 dark:bg-slate-800 rounded-xl font-bold text-xs">BATAL</button>
+                                        <button type="submit" className="flex-1 py-2 bg-blue-600 text-white rounded-xl font-bold text-xs">SIMPAN</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    )}
                 </div>
             );
         }
