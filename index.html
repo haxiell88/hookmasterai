@@ -19,8 +19,8 @@
         .dark .custom-scrollbar::-webkit-scrollbar-thumb { background: #334155; }
         .animate-fade-in { animation: fadeIn 0.3s ease-out forwards; }
         @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-        .glass-panel { background: rgba(255, 255, 255, 0.9); backdrop-filter: blur(10px); }
-        .dark .glass-panel { background: rgba(15, 23, 42, 0.9); }
+        .faq-content { transition: max-height 0.3s ease-out, opacity 0.3s ease-out; max-height: 0; opacity: 0; overflow: hidden; }
+        .faq-content.open { max-height: 1000px; opacity: 1; }
     </style>
 </head>
 <body class="bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 font-sans antialiased transition-colors duration-200">
@@ -32,7 +32,9 @@
         function App() {
             // --- CORE STATE ---
             const [activeTab, setActiveTab] = useState('generator');
-            const [darkMode, setDarkMode] = useState(() => localStorage.getItem('cs_theme') === 'dark');
+            const [darkMode, setDarkMode] = useState(() => {
+                try { return localStorage.getItem('cs_theme') === 'dark'; } catch { return false; }
+            });
             
             // --- SETTINGS ---
             const [provider, setProvider] = useState(() => localStorage.getItem('cs_provider') || 'gemini');
@@ -43,20 +45,30 @@
             // --- DATA ---
             const [formData, setFormData] = useState({ topic: '', audience: '', pain: '', goal: '', keyword: '', platform: 'TikTok / Reels', vibe: 'Santai', language: 'Indonesia' });
             const [generatedHooks, setGeneratedHooks] = useState([]);
-            const [savedHooks, setSavedHooks] = useState(() => JSON.parse(localStorage.getItem('cs_saved_hooks') || '[]'));
-            const [savedPersonas, setSavedPersonas] = useState(() => JSON.parse(localStorage.getItem('cs_saved_personas') || '[]'));
+            const [savedHooks, setSavedHooks] = useState(() => {
+                try { return JSON.parse(localStorage.getItem('cs_saved_hooks')) || []; } catch { return []; }
+            });
+            const [savedPersonas, setSavedPersonas] = useState(() => {
+                try { return JSON.parse(localStorage.getItem('cs_saved_personas')) || []; } catch { return []; }
+            });
 
-            // --- UI ---
+            // --- UI HELPERS ---
+            const [searchSaved, setSearchSaved] = useState('');
+            const [searchPersonas, setSearchPersonas] = useState('');
+            const [searchCalendar, setSearchCalendar] = useState('');
+            const [searchFAQ, setSearchFAQ] = useState('');
+            const [ideaInput, setIdeaInput] = useState('');
+            const [ideaType, setIdeaType] = useState('Edukasi');
+            const [generatedIdeas, setGeneratedIdeas] = useState([]);
             const [isGenerating, setIsGenerating] = useState(false);
-            const [imageFile, setImageFile] = useState(null);
-            const [imagePreview, setImagePreview] = useState(null);
+            const [isGeneratingIdeas, setIsGeneratingIdeas] = useState(false);
+            
+            // --- MODALS & MENUS ---
             const [showPersonaMenu, setShowPersonaMenu] = useState(false);
-            const fileInputRef = useRef(null);
-
-            // --- MODALS ---
-            const [modal, setModal] = useState({ isOpen: false, type: '', title: '', content: null, loading: false, data: null });
-            const [remixModal, setRemixModal] = useState({ isOpen: false, hook: '' });
             const [quickSaveModal, setQuickSaveModal] = useState(false);
+            const [openFaqIndex, setOpenFaqIndex] = useState(null);
+            const [modal, setModal] = useState({ isOpen: false, type: '', title: '', content: null, loading: false });
+            const [remixModal, setRemixModal] = useState({ isOpen: false, hook: '' });
 
             // --- CONSTANTS ---
             const remixStyles = ['Lebih Pendek', 'Storytelling', 'Sarkas', 'Pertanyaan', 'Bahasa Inggris', 'Jaksel', 'Formal', 'Clickbait', 'Emosional', 'Gen Z', 'Emak-emak', 'Pantun'];
@@ -69,12 +81,13 @@
 
             // --- API ENGINE ---
             const parseAIResponse = (text) => {
+                if(!text) return null;
                 try {
                     let clean = text.replace(/```json/g, '').replace(/```/g, '').trim();
                     const start = clean.indexOf('['); const end = clean.lastIndexOf(']');
                     if(start >= 0 && end >= 0) return JSON.parse(clean.substring(start, end+1));
-                    return JSON.parse(clean); // Try direct parse
-                } catch (e) { return null; }
+                    return JSON.parse(clean);
+                } catch (e) { console.error("Parse Error", e); return null; }
             };
 
             const callAI = async (prompt, isJson = true) => {
@@ -84,10 +97,8 @@
                 if (provider === 'gemini') {
                     endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${aiModel}:generateContent?key=${apiKey}`;
                     headers = { 'Content-Type': 'application/json' };
-                    let parts = [{ text: prompt }];
-                    if (imageFile && !aiModel.includes('gemma')) parts.push({ inlineData: { mimeType: imageFile.mimeType, data: imageFile.data } });
-                    body = JSON.stringify({ contents: [{ parts }], safetySettings: [{category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE"}] });
-                } else { // Groq
+                    body = JSON.stringify({ contents: [{ parts: [{ text: prompt }] }], safetySettings: [{category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE"}] });
+                } else {
                     endpoint = `https://api.groq.com/openai/v1/chat/completions`;
                     headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${apiKey}` };
                     body = JSON.stringify({ model: aiModel, messages: [{ role: "user", content: prompt }], response_format: isJson ? { type: "json_object" } : undefined });
@@ -108,7 +119,7 @@
             const generateHooks = async () => {
                 setIsGenerating(true); setGeneratedHooks([]);
                 const prompt = `Role: Senior Copywriter. Buat 6 hook viral untuk ${formData.platform}. 
-                Topik: ${formData.topic}. Target: ${formData.audience}. Masalah: ${formData.pain}. Goal/Impian: ${formData.goal}. Keyword: ${formData.keyword}. Gaya: ${formData.vibe} (${formData.language}).
+                Topik: ${formData.topic}. Target: ${formData.audience}. Masalah: ${formData.pain}. Goal: ${formData.goal}. Keyword: ${formData.keyword}. Gaya: ${formData.vibe} (${formData.language}).
                 OUTPUT JSON ARRAY ONLY: [{"category":"Jenis","tone":"Tone","text":"Hook text","hashtags":["#tag"]}]`;
                 try {
                     const json = await callAI(prompt, true);
@@ -117,12 +128,24 @@
                 } catch (e) { alert(e.message); } finally { setIsGenerating(false); }
             };
 
+            const generateIdeas = async () => {
+                if(!ideaInput) return;
+                setIsGeneratingIdeas(true);
+                const prompt = `Berikan 5 ide konten unik tipe "${ideaType}" tentang niche "${ideaInput}". Jangan kasih ide umum. Output JSON Array: [{"topic":"Judul Menarik","angle":"Angle unik"}]`;
+                try {
+                    const json = await callAI(prompt, true);
+                    if (json) setGeneratedIdeas(json);
+                } catch(e) { alert(e.message); } finally { setIsGeneratingIdeas(false); }
+            };
+
             const handleFeature = async (type, hookText, extraPrompt = "") => {
                 let title = type;
                 if(type === 'Expand') title = 'Naskah Konten';
                 else if(type === 'Carousel') title = 'Slide Carousel';
                 else if(type === 'Analisa') title = 'Viral Meter';
                 else if(type === 'Visual') title = 'Visual Director';
+                else if(type === 'Remix') title = 'Hasil Remix';
+                else if(type === 'Repurpose') title = 'Repurpose';
                 
                 setModal({ isOpen: true, type, title, loading: true, content: '' });
                 
@@ -135,183 +158,277 @@
                 else if (type === 'Repurpose') prompt = `Ubah hook "${hookText}" menjadi Tweet pendek dan Postingan LinkedIn formal.`;
 
                 try {
-                    const res = await callAI(prompt, false); // False because mostly text response needed
+                    const res = await callAI(prompt, false);
                     setModal(prev => ({ ...prev, loading: false, content: res }));
                 } catch (e) {
-                    setModal(prev => ({ ...prev, loading: false, content: "Gagal memproses: " + e.message }));
+                    setModal(prev => ({ ...prev, loading: false, content: "Gagal: " + e.message }));
                 }
             };
 
+            const handleUsePersona = (p) => {
+                setFormData({ ...formData, topic: p.topic || '', audience: p.audience || '', pain: p.pain || '', goal: p.goal || '' });
+                setShowPersonaMenu(false);
+                setActiveTab('generator');
+            };
+
+            // --- FILTERED DATA ---
+            const filteredHooks = savedHooks.filter(h => (h.text || '').toLowerCase().includes(searchSaved.toLowerCase()));
+            const filteredPersonas = savedPersonas.filter(p => (p.name || '').toLowerCase().includes(searchPersonas.toLowerCase()));
+            const filteredCalendar = savedHooks.filter(h => h.scheduledDate).filter(h => (h.text || '').toLowerCase().includes(searchCalendar.toLowerCase()));
+            const faqFiltered = [
+                { q: "Apa itu Creator Suite?", a: "Platform manajemen konten untuk riset ide, pembuatan hook viral, dan penjadwalan konten." },
+                { q: "Cara pakai Groq?", a: "Masuk ke Settings (⚙️), pilih Provider Groq, masukkan API Key Groq Anda, dan pilih model Llama." },
+                { q: "Data saya aman?", a: "Ya, data tersimpan di browser Anda (Local Storage), bukan di server kami." }
+            ].filter(f => f.q.toLowerCase().includes(searchFAQ.toLowerCase()));
+
             // --- RENDER ---
             return (
-                <div className={darkMode ? "dark" : ""}>
-                    <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 pb-20 font-sans transition-colors">
-                        
-                        {/* HEADER */}
-                        <header className="bg-white/90 dark:bg-slate-900/90 backdrop-blur border-b dark:border-slate-800 sticky top-0 z-40 px-4 py-3 flex justify-between items-center shadow-sm">
-                            <div className="flex items-center gap-3">
-                                <div className="bg-blue-600 text-white p-1.5 rounded-lg font-black text-xs">CS</div>
-                                <div><h1 className="font-black text-lg leading-none tracking-tight">Creator Suite</h1><span className="text-[9px] font-bold text-slate-400 tracking-widest">AI POWERED</span></div>
-                            </div>
-                            <div className="flex gap-2">
-                                <button onClick={()=>setIsSettingsOpen(true)} className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-lg text-[10px] font-bold border dark:border-slate-700 flex items-center gap-2"><Icon c="⚙️"/> {provider === 'gemini' ? 'GEMINI' : 'GROQ'}</button>
-                                <button onClick={()=>setDarkMode(!darkMode)} className="p-2 bg-slate-100 dark:bg-slate-800 rounded-lg border dark:border-slate-700"><Icon c={darkMode ? "☀️" : "🌙"}/></button>
-                            </div>
-                        </header>
+                <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 pb-20 font-sans transition-colors">
+                    
+                    {/* HEADER */}
+                    <header className="bg-white/90 dark:bg-slate-900/90 backdrop-blur border-b dark:border-slate-800 sticky top-0 z-40 px-4 py-3 flex justify-between items-center shadow-sm">
+                        <div className="flex items-center gap-3">
+                            <div className="bg-blue-600 text-white p-1.5 rounded-lg font-black text-xs">CS</div>
+                            <div><h1 className="font-black text-lg leading-none tracking-tight">Creator Suite</h1><span className="text-[9px] font-bold text-slate-400 tracking-widest">AI POWERED</span></div>
+                        </div>
+                        <div className="flex gap-2">
+                            <button onClick={()=>setIsSettingsOpen(true)} className="px-3 py-1.5 bg-slate-100 dark:bg-slate-800 rounded-lg text-[10px] font-bold border dark:border-slate-700 flex items-center gap-2"><Icon c="⚙️"/> {provider.toUpperCase()}</button>
+                            <button onClick={()=>setDarkMode(!darkMode)} className="p-2 bg-slate-100 dark:bg-slate-800 rounded-lg border dark:border-slate-700"><Icon c={darkMode ? "☀️" : "🌙"}/></button>
+                        </div>
+                    </header>
 
-                        {/* SETTINGS MODAL */}
-                        {isSettingsOpen && (
-                            <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-                                <div className="bg-white dark:bg-slate-900 w-full max-w-md p-6 rounded-2xl shadow-2xl border dark:border-slate-800">
-                                    <h3 className="font-bold text-lg mb-4 flex items-center gap-2 uppercase"><Icon c="⚙️"/> Engine Settings</h3>
-                                    <form onSubmit={(e)=>{e.preventDefault(); const p = e.target.provider.value; const k = e.target.apiKey.value.trim(); const m = e.target.model.value; setProvider(p); setApiKey(k); setAiModel(m); localStorage.setItem('cs_provider', p); localStorage.setItem('cs_api_key', k); localStorage.setItem('cs_ai_model', m); setIsSettingsOpen(false); alert("Saved!");}} className="space-y-4">
-                                        <div><label className="text-[10px] font-bold text-slate-400 block mb-1">PROVIDER</label>
-                                            <select name="provider" defaultValue={provider} onChange={(e)=>setProvider(e.target.value)} className="w-full p-2.5 border rounded-xl dark:bg-slate-800 text-sm font-bold"><option value="gemini">Google Gemini</option><option value="groq">Groq (Meta Llama)</option></select>
+                    {/* SETTINGS MODAL */}
+                    {isSettingsOpen && (
+                        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+                            <div className="bg-white dark:bg-slate-900 w-full max-w-md p-6 rounded-3xl shadow-2xl border dark:border-slate-800">
+                                <h3 className="font-bold text-lg mb-4 flex items-center gap-2 uppercase"><Icon c="⚙️"/> Engine Settings</h3>
+                                <form onSubmit={(e)=>{e.preventDefault(); const p = e.target.provider.value; const k = e.target.apiKey.value.trim(); const m = e.target.model.value; setProvider(p); setApiKey(k); setAiModel(m); localStorage.setItem('cs_provider', p); localStorage.setItem('cs_api_key', k); localStorage.setItem('cs_ai_model', m); setIsSettingsOpen(false); alert("Saved!");}} className="space-y-4">
+                                    <div><label className="text-[10px] font-bold text-slate-400 block mb-1">PROVIDER</label>
+                                        <select name="provider" defaultValue={provider} onChange={(e)=>setProvider(e.target.value)} className="w-full p-2.5 border rounded-xl dark:bg-slate-800 text-sm font-bold"><option value="gemini">Google Gemini</option><option value="groq">Groq (Meta Llama)</option></select>
+                                    </div>
+                                    <div><label className="text-[10px] font-bold text-slate-400 block mb-1">MODEL</label>
+                                        <select name="model" defaultValue={aiModel} className="w-full p-2.5 border rounded-xl dark:bg-slate-800 text-sm">
+                                            {provider === 'gemini' ? <><option value="gemini-1.5-flash-lite">Gemini 1.5 Flash Lite</option><option value="gemini-3.0-flash">Gemini 3.0 Flash</option><option value="gemini-1.5-flash">Gemini 1.5 Flash</option></> : <><option value="llama-3.3-70b-versatile">Llama 3.3 70B (Best)</option><option value="llama-3.1-8b-instant">Llama 3.1 8B (Fast)</option></>}
+                                        </select>
+                                    </div>
+                                    <div><label className="text-[10px] font-bold text-slate-400 block mb-1">API KEY</label><input name="apiKey" defaultValue={apiKey} className="w-full p-2.5 border rounded-xl dark:bg-slate-800 text-sm font-mono" placeholder="Paste Key Here..." required /></div>
+                                    <div className="flex gap-2 pt-2"><button type="button" onClick={()=>setIsSettingsOpen(false)} className="flex-1 py-2.5 border rounded-xl font-bold text-xs">BATAL</button><button type="submit" className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-xs">SIMPAN</button></div>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
+                    <nav className="flex justify-center gap-2 p-4 overflow-x-auto custom-scrollbar border-b dark:border-slate-800 bg-white dark:bg-slate-900/50 sticky top-[60px] z-30">
+                        {['generator', 'koleksi', 'persona', 'ide', 'jadwal', 'faq'].map(t => (
+                            <button key={t} onClick={()=>setActiveTab(t)} className={`px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-wider transition-all ${activeTab === t ? 'bg-slate-900 dark:bg-blue-600 text-white shadow-lg scale-105' : 'bg-white dark:bg-slate-800 border text-slate-500'}`}>{t}</button>
+                        ))}
+                    </nav>
+
+                    <main className="max-w-2xl mx-auto px-4 pb-20 pt-4">
+                        {/* TAB GENERATOR */}
+                        {activeTab === 'generator' && (
+                            <div className="space-y-6 animate-fade-in">
+                                <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border shadow-sm relative">
+                                    <div className="flex justify-between items-center mb-6">
+                                        <h2 className="font-bold text-xl flex items-center gap-2"><Icon c="✨"/> Generator</h2>
+                                        {savedPersonas.length > 0 && <button onClick={()=>setShowPersonaMenu(!showPersonaMenu)} className="text-[10px] font-bold text-blue-600 bg-blue-50 dark:bg-blue-900/30 px-3 py-1.5 rounded-full flex items-center gap-1">LOAD PERSONA <Icon c="🔽"/></button>}
+                                        {showPersonaMenu && <div className="absolute top-16 right-6 bg-white dark:bg-slate-800 border rounded-xl shadow-2xl z-20 w-48 p-1 max-h-48 overflow-y-auto">{savedPersonas.map(p=><button key={p.id} onClick={()=>handleUsePersona(p)} className="w-full text-left p-2 text-xs hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg">{p.name}</button>)}</div>}
+                                    </div>
+
+                                    <div className="space-y-4">
+                                        <div><label className="text-[9px] font-black text-slate-400 mb-1 block">TOPIK KONTEN</label><input value={formData.topic} onChange={e=>setFormData({...formData, topic:e.target.value})} className="w-full p-3 rounded-2xl border dark:bg-slate-800 outline-none focus:ring-2 focus:ring-blue-500 font-medium" placeholder="Contoh: Tips Hidup Minimalis"/></div>
+                                        <div><label className="text-[9px] font-black text-slate-400 mb-1 block">KEYWORD SEO</label><input value={formData.keyword} onChange={e=>setFormData({...formData, keyword:e.target.value})} className="w-full p-3 rounded-2xl border dark:bg-slate-800 text-sm" placeholder="wajib ada di teks"/></div>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div><label className="text-[9px] font-black text-slate-400 mb-1 block">TARGET AUDIENS</label><input value={formData.audience} onChange={e=>setFormData({...formData, audience:e.target.value})} className="w-full p-3 border rounded-xl dark:bg-slate-800 text-sm" placeholder="Siapa yang baca?"/></div>
+                                            <div><label className="text-[9px] font-black text-slate-400 mb-1 block">PAIN (MASALAH)</label><input value={formData.pain} onChange={e=>setFormData({...formData, pain:e.target.value})} className="w-full p-3 border rounded-xl dark:bg-slate-800 text-sm" placeholder="Apa masalah mereka?"/></div>
                                         </div>
-                                        <div><label className="text-[10px] font-bold text-slate-400 block mb-1">MODEL</label>
-                                            <select name="model" className="w-full p-2.5 border rounded-xl dark:bg-slate-800 text-sm">
-                                                {provider === 'gemini' ? <><option value="gemini-1.5-flash-lite">Gemini 1.5 Flash Lite (0/20)</option><option value="gemini-3.0-flash">Gemini 3.0 Flash (0/20)</option><option value="gemini-1.5-flash">Gemini 1.5 Flash</option></> : <><option value="llama-3.3-70b-versatile">Llama 3.3 70B (Best)</option><option value="llama-3.1-8b-instant">Llama 3.1 8B (Fast)</option></>}
-                                            </select>
+                                        <div><label className="text-[9px] font-black text-slate-400 mb-1 block">GOAL / IMPIAN</label><input value={formData.goal} onChange={e=>setFormData({...formData, goal:e.target.value})} className="w-full p-3 border rounded-xl dark:bg-slate-800 text-sm" placeholder="Apa yang mereka inginkan?"/></div>
+                                        
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <select value={formData.platform} onChange={e=>setFormData({...formData, platform:e.target.value})} className="p-3 border rounded-xl dark:bg-slate-800 text-sm font-bold"><option>TikTok / Reels</option><option>LinkedIn</option><option>Twitter / X</option><option>Instagram Feed</option></select>
+                                            <select value={formData.vibe} onChange={e=>setFormData({...formData, vibe:e.target.value})} className="p-3 border rounded-xl dark:bg-slate-800 text-sm font-bold"><option>Santai & Viral</option><option>Profesional</option><option>Storytelling</option><option>Hard Selling</option><option>Kontroversial</option><option>Lucu / Receh</option></select>
                                         </div>
-                                        <div><label className="text-[10px] font-bold text-slate-400 block mb-1">API KEY</label><input name="apiKey" defaultValue={apiKey} className="w-full p-2.5 border rounded-xl dark:bg-slate-800 text-sm font-mono" placeholder="Paste Key Here..." required /></div>
-                                        <div className="flex gap-2 pt-2"><button type="button" onClick={()=>setIsSettingsOpen(false)} className="flex-1 py-2.5 border rounded-xl font-bold text-xs">BATAL</button><button type="submit" className="flex-1 py-2.5 bg-blue-600 text-white rounded-xl font-bold text-xs">SIMPAN</button></div>
-                                    </form>
+
+                                        <div className="flex gap-2 pt-2">
+                                            <button onClick={generateHooks} disabled={isGenerating || !formData.topic} className="flex-1 bg-slate-900 dark:bg-blue-600 text-white py-4 rounded-xl font-black text-sm uppercase tracking-widest shadow-xl hover:scale-[1.02] transition-transform disabled:opacity-50 disabled:scale-100">{isGenerating ? "SEDANG BERPIKIR..." : "GENERATE HOOK"}</button>
+                                            <button onClick={()=>setQuickSaveModal(true)} disabled={!formData.topic} className="px-4 border rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title="Simpan Persona"><Icon c="💾"/></button>
+                                        </div>
+                                    </div>
                                 </div>
+
+                                {generatedHooks.map(h => (
+                                    <div key={h.id} className="bg-white dark:bg-slate-900 p-6 rounded-3xl border hover:border-blue-400 transition-all shadow-sm animate-fade-in group">
+                                        <div className="flex justify-between mb-3">
+                                            <div className="flex gap-2"><span className="text-[9px] font-black bg-blue-50 dark:bg-blue-900/30 text-blue-600 px-3 py-1 rounded-full uppercase tracking-wide">{h.category}</span><span className="text-[9px] font-bold text-slate-400 py-1 uppercase">{h.tone}</span></div>
+                                            <button onClick={()=>{setSavedHooks([{...h, savedAt:Date.now()}, ...savedHooks]); alert("Disimpan!");}} className="text-slate-300 hover:text-red-500 transition-colors"><Icon c="❤️"/></button>
+                                        </div>
+                                        <p className="font-semibold text-lg leading-relaxed text-slate-800 dark:text-slate-100 mb-6">"{h.text}"</p>
+                                        <div className="flex flex-wrap gap-2 pt-4 border-t dark:border-slate-800">
+                                            {[
+                                                {l:'Expand', i:'📝', f:()=>handleFeature('Expand', h.text)},
+                                                {l:'Carousel', i:'🖼️', f:()=>handleFeature('Carousel', h.text)},
+                                                {l:'Remix', i:'🔀', f:()=>{setRemixModal({isOpen:true, hook:h.text})}},
+                                                {l:'Analisa', i:'📊', f:()=>handleFeature('Analisa', h.text)},
+                                                {l:'Visual', i:'🎬', f:()=>handleFeature('Visual', h.text)},
+                                                {l:'Ubah', i:'🔄', f:()=>handleFeature('Repurpose', h.text)},
+                                                {l:'Salin', i:'📋', f:()=>navigator.clipboard.writeText(h.text)}
+                                            ].map((btn, idx) => (
+                                                <button key={idx} onClick={btn.f} className="flex items-center gap-1 px-3 py-1.5 rounded-lg border dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 text-[10px] font-bold uppercase transition-all text-slate-600 dark:text-slate-300">
+                                                    <Icon c={btn.i}/> {btn.l}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
                             </div>
                         )}
 
-                        <nav className="flex justify-center gap-2 p-4 overflow-x-auto custom-scrollbar">
-                            {['generator', 'koleksi', 'persona', 'ide', 'jadwal'].map(t => (
-                                <button key={t} onClick={()=>setActiveTab(t)} className={`px-4 py-2 rounded-full text-[10px] font-black uppercase tracking-wider transition-all ${activeTab === t ? 'bg-slate-900 dark:bg-blue-600 text-white shadow-lg scale-105' : 'bg-white dark:bg-slate-800 border text-slate-500'}`}>{t}</button>
-                            ))}
-                        </nav>
-
-                        <main className="max-w-2xl mx-auto px-4 pb-20">
-                            {/* GENERATOR TAB */}
-                            {activeTab === 'generator' && (
-                                <div className="space-y-6 animate-fade-in">
-                                    <div className="bg-white dark:bg-slate-900 p-6 rounded-3xl border shadow-sm relative">
-                                        <div className="flex justify-between items-center mb-6">
-                                            <h2 className="font-bold text-xl flex items-center gap-2"><Icon c="✨"/> Generator</h2>
-                                            {savedPersonas.length > 0 && <button onClick={()=>setShowPersonaMenu(!showPersonaMenu)} className="text-[10px] font-bold text-blue-600 bg-blue-50 dark:bg-blue-900/30 px-3 py-1.5 rounded-full flex items-center gap-1">LOAD PERSONA <Icon c="🔽"/></button>}
-                                            {showPersonaMenu && <div className="absolute top-16 right-6 bg-white dark:bg-slate-800 border rounded-xl shadow-xl z-20 w-48 p-1">{savedPersonas.map(p=><button key={p.id} onClick={()=>{setFormData({...formData, topic:p.topic||'', audience:p.audience||'', pain:p.pain||'', goal:p.goal||''}); setShowPersonaMenu(false)}} className="w-full text-left p-2 text-xs hover:bg-slate-100 dark:hover:bg-slate-700 rounded-lg">{p.name}</button>)}</div>}
+                        {/* TAB KOLEKSI */}
+                        {activeTab === 'koleksi' && (
+                            <div className="animate-fade-in space-y-4">
+                                <div className="relative mb-6"><span className="absolute left-4 top-3.5 text-slate-400"><Icon c="🔍"/></span><input value={searchSaved} onChange={e=>setSearchSaved(e.target.value)} placeholder="Cari koleksi..." className="w-full pl-11 pr-4 py-3.5 rounded-2xl border dark:bg-slate-900 outline-none shadow-sm focus:ring-1 focus:ring-blue-500 font-medium text-sm"/></div>
+                                {filteredHooks.length === 0 ? <div className="text-center py-20 text-slate-400 opacity-50"><Icon c="📂"/><p className="text-xs font-bold uppercase mt-2">Koleksi masih kosong</p></div> : filteredHooks.map(h=>(
+                                    <div key={h.id} className="bg-white dark:bg-slate-900 p-5 rounded-3xl border shadow-sm flex flex-col gap-3">
+                                        <div className="flex justify-between items-start">
+                                            <div className="flex gap-2"><span className="text-[9px] font-black bg-slate-100 dark:bg-slate-800 px-2 py-1 rounded uppercase">{h.category}</span></div>
+                                            <button onClick={()=>setSavedHooks(savedHooks.filter(sh=>sh.id!==h.id))} className="text-red-500 p-1"><Icon c="🗑️"/></button>
                                         </div>
-
-                                        <div className="space-y-4">
-                                            <div><label className="text-[10px] font-black text-slate-400 block mb-1">TOPIK KONTEN</label><input value={formData.topic} onChange={e=>setFormData({...formData, topic:e.target.value})} className="w-full p-3 rounded-xl border dark:bg-slate-800 outline-none focus:ring-2 focus:ring-blue-500" placeholder="Topik utama konten kamu..."/></div>
-                                            <div><label className="text-[10px] font-black text-slate-400 block mb-1">KEYWORD SEO</label><input value={formData.keyword} onChange={e=>setFormData({...formData, keyword:e.target.value})} className="w-full p-3 rounded-xl border dark:bg-slate-800 text-sm" placeholder="Kata kunci wajib..."/></div>
-                                            <div className="grid grid-cols-2 gap-3">
-                                                <div><label className="text-[10px] font-black text-slate-400 block mb-1">TARGET AUDIENS</label><input value={formData.audience} onChange={e=>setFormData({...formData, audience:e.target.value})} className="w-full p-3 border rounded-xl dark:bg-slate-800 text-sm" placeholder="Siapa yang baca?"/></div>
-                                                <div><label className="text-[10px] font-black text-slate-400 block mb-1">PAIN (MASALAH)</label><input value={formData.pain} onChange={e=>setFormData({...formData, pain:e.target.value})} className="w-full p-3 border rounded-xl dark:bg-slate-800 text-sm" placeholder="Apa masalah mereka?"/></div>
-                                            </div>
-                                            {/* RESTORED: GOAL INPUT */}
-                                            <div><label className="text-[10px] font-black text-slate-400 block mb-1">GOAL / IMPIAN AUDIENS</label><input value={formData.goal} onChange={e=>setFormData({...formData, goal:e.target.value})} className="w-full p-3 border rounded-xl dark:bg-slate-800 text-sm" placeholder="Apa yang mereka inginkan?"/></div>
-                                            
-                                            <div className="grid grid-cols-2 gap-3">
-                                                <select value={formData.platform} onChange={e=>setFormData({...formData, platform:e.target.value})} className="p-3 border rounded-xl dark:bg-slate-800 text-sm font-bold"><option>TikTok / Reels</option><option>LinkedIn</option><option>Twitter / X</option><option>Instagram Feed</option></select>
-                                                <select value={formData.vibe} onChange={e=>setFormData({...formData, vibe:e.target.value})} className="p-3 border rounded-xl dark:bg-slate-800 text-sm font-bold"><option>Santai & Viral</option><option>Profesional</option><option>Storytelling</option><option>Hard Selling</option><option>Kontroversial</option><option>Lucu / Receh</option></select>
-                                            </div>
-
-                                            <div className="flex gap-2 pt-2">
-                                                <button onClick={generateHooks} disabled={isGenerating || !formData.topic} className="flex-1 bg-slate-900 dark:bg-blue-600 text-white py-4 rounded-xl font-black text-sm uppercase tracking-widest shadow-xl hover:scale-[1.02] transition-transform disabled:opacity-50 disabled:scale-100">{isGenerating ? "SEDANG BERPIKIR..." : "GENERATE HOOK"}</button>
-                                                <button onClick={()=>setQuickSaveModal(true)} disabled={!formData.topic} className="px-4 border rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors" title="Simpan Persona"><Icon c="💾"/></button>
-                                            </div>
+                                        <p className="font-bold italic text-sm">"{h.text}"</p>
+                                        <div className="flex items-center gap-3 bg-slate-50 dark:bg-slate-800/50 p-2 rounded-xl">
+                                            <label className="text-[9px] font-black text-slate-400 ml-1">JADWAL:</label>
+                                            <input type="date" value={h.scheduledDate || ''} onChange={(e)=>setSavedHooks(savedHooks.map(sh => sh.id === h.id ? {...sh, scheduledDate: e.target.value} : sh))} className="bg-white dark:bg-slate-900 border text-[10px] font-black rounded px-2 py-1 outline-none"/>
+                                        </div>
+                                        <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-100 dark:border-slate-800">
+                                            <button onClick={()=>handleFeature('Expand', h.text)} className="text-[10px] font-bold text-blue-600 hover:underline">Expand</button>
+                                            <button onClick={()=>handleFeature('Carousel', h.text)} className="text-[10px] font-bold text-blue-600 hover:underline">Carousel</button>
                                         </div>
                                     </div>
+                                ))}
+                            </div>
+                        )}
 
-                                    {/* RESULTS */}
-                                    {generatedHooks.map((h) => (
-                                        <div key={h.id} className="bg-white dark:bg-slate-900 p-6 rounded-3xl border hover:border-blue-400 transition-all shadow-sm animate-fade-in group">
-                                            <div className="flex justify-between mb-3">
-                                                <div className="flex gap-2"><span className="text-[10px] font-black bg-blue-50 dark:bg-blue-900/30 text-blue-600 px-3 py-1 rounded-full uppercase tracking-wide">{h.category}</span><span className="text-[10px] font-bold text-slate-400 py-1 uppercase">{h.tone}</span></div>
-                                                <button onClick={()=>{setSavedHooks([{...h, savedAt:Date.now()}, ...savedHooks]); alert("Disimpan!");}} className="text-slate-300 hover:text-red-500 transition-colors"><Icon c="❤️"/></button>
+                        {/* TAB PERSONA */}
+                        {activeTab === 'persona' && (
+                            <div className="animate-fade-in space-y-4">
+                                <div className="flex gap-2 mb-6">
+                                    <div className="relative flex-1"><span className="absolute left-3 top-3 text-slate-400"><Icon c="🔍"/></span><input value={searchPersonas} onChange={e=>setSearchPersonas(e.target.value)} placeholder="Cari persona..." className="w-full pl-10 pr-4 py-3 rounded-2xl border dark:bg-slate-900 outline-none text-sm"/></div>
+                                    <button onClick={()=>setQuickSaveModal(true)} className="bg-slate-900 dark:bg-blue-600 text-white px-5 rounded-2xl font-black text-xs uppercase shadow-lg">BUAT</button>
+                                </div>
+                                {filteredPersonas.length === 0 ? <p className="text-center text-slate-400 py-10">Belum ada persona tersimpan.</p> : filteredPersonas.map(p=>(
+                                    <div key={p.id} className="bg-white dark:bg-slate-900 p-5 rounded-3xl border flex justify-between items-center hover:border-blue-400 transition-all cursor-pointer group" onClick={()=>handleUsePersona(p)}>
+                                        <div className="flex-1">
+                                            <h4 className="font-black text-base uppercase tracking-tight group-hover:text-blue-600">{p.name}</h4>
+                                            <p className="text-[10px] font-bold text-slate-400">{p.audience} • {p.topic}</p>
+                                        </div>
+                                        <button onClick={(e)=>{e.stopPropagation(); setSavedPersonas(savedPersonas.filter(sp=>sp.id!==p.id))}} className="text-red-500 opacity-0 group-hover:opacity-100 p-2"><Icon c="🗑️"/></button>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
+
+                        {/* TAB IDE */}
+                        {activeTab === 'ide' && (
+                            <div className="animate-fade-in text-center space-y-8">
+                                <div className="py-6"><div className="bg-yellow-100 dark:bg-yellow-900/30 p-4 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-4 text-3xl"><Icon c="💡"/></div><h2 className="text-2xl font-black uppercase tracking-tight">Idea Lab</h2><p className="text-slate-400 text-sm font-medium px-4">Pilih tipe konten & masukkan niche Anda.</p></div>
+                                <div className="flex flex-wrap justify-center gap-2 px-2">
+                                    {contentTypes.map(t => <button key={t} onClick={() => setIdeaType(t)} className={`px-4 py-2 rounded-full text-[10px] font-black uppercase border transition-all ${ideaType === t ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900 border-slate-900 scale-110 shadow-lg' : 'bg-white dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500'}`}>{t}</button>)}
+                                </div>
+                                <div className="flex gap-2 bg-white dark:bg-slate-900 p-2 rounded-3xl border border-slate-200 dark:border-slate-800 shadow-xl max-w-md mx-auto focus-within:ring-2 ring-blue-500 transition-all">
+                                    <input value={ideaInput} onChange={e=>setIdeaInput(e.target.value)} placeholder={`Niche: Bisnis Kopi, Skincare...`} className="flex-1 bg-transparent px-4 py-3 outline-none font-bold text-sm" onKeyDown={e => e.key === 'Enter' && generateIdeas()} />
+                                    <button onClick={generateIdeas} className="bg-slate-900 dark:bg-blue-600 text-white px-6 rounded-2xl font-black text-[10px] uppercase shadow-md active:scale-95 transition-all">{isGeneratingIdeas ? "..." : "Cari"}</button>
+                                </div>
+                                <div className="grid gap-4 text-left max-w-md mx-auto pb-10">
+                                    {generatedIdeas.map((idea, i) => (
+                                        <div key={i} className="bg-white dark:bg-slate-900 p-5 rounded-3xl border border-slate-200 dark:border-slate-700 hover:border-blue-400 cursor-pointer shadow-sm flex justify-between items-center group transition-all" onClick={() => {setFormData({...formData, topic: idea.topic}); setActiveTab('generator');}}>
+                                            <div className="flex-1">
+                                                <div className="text-[9px] font-black bg-slate-100 dark:bg-slate-800 inline-block px-2 py-1 rounded-full mb-2 text-slate-500 uppercase">{ideaType}</div>
+                                                <h4 className="font-bold text-sm mb-1 group-hover:text-blue-600 transition-colors uppercase tracking-tight">{idea.topic}</h4>
+                                                <p className="text-slate-400 text-xs font-medium leading-relaxed">{idea.angle || idea.text}</p>
                                             </div>
-                                            <p className="font-semibold text-lg leading-relaxed text-slate-800 dark:text-slate-100 mb-6">"{h.text}"</p>
-                                            
-                                            {/* RESTORED: FEATURE TOOLBAR */}
-                                            <div className="flex flex-wrap gap-2 pt-4 border-t dark:border-slate-800">
-                                                {[
-                                                    {l:'Expand', i:'📝', f:()=>handleFeature('Expand', h.text)},
-                                                    {l:'Carousel', i:'🖼️', f:()=>handleFeature('Carousel', h.text)},
-                                                    {l:'Remix', i:'🔀', f:()=>{setRemixModal({isOpen:true, hook:h.text})}},
-                                                    {l:'Analisa', i:'📊', f:()=>handleFeature('Analisa', h.text)},
-                                                    {l:'Visual', i:'🎬', f:()=>handleFeature('Visual', h.text)},
-                                                    {l:'Ubah', i:'🔄', f:()=>handleFeature('Repurpose', h.text)},
-                                                    {l:'Salin', i:'📋', f:()=>navigator.clipboard.writeText(h.text)}
-                                                ].map((btn, idx) => (
-                                                    <button key={idx} onClick={btn.f} className="flex items-center gap-1 px-3 py-1.5 rounded-lg border dark:border-slate-700 bg-slate-50 dark:bg-slate-800 hover:bg-blue-50 dark:hover:bg-blue-900/20 text-[10px] font-bold uppercase transition-all text-slate-600 dark:text-slate-300">
-                                                        <Icon c={btn.i}/> {btn.l}
-                                                    </button>
-                                                ))}
-                                            </div>
+                                            <button className="bg-blue-50 dark:bg-blue-900/30 text-blue-600 dark:text-blue-400 p-2 rounded-full font-black text-[10px] group-hover:bg-blue-600 group-hover:text-white transition-all"><Icon c="➡️"/></button>
                                         </div>
                                     ))}
                                 </div>
-                            )}
+                            </div>
+                        )}
 
-                            {/* TAB LAINNYA (Sama seperti sebelumnya tapi disesuaikan) */}
-                            {activeTab === 'ide' && (
-                                <div className="space-y-6 text-center animate-fade-in">
-                                    <div className="py-8"><div className="bg-yellow-100 dark:bg-yellow-900/30 w-16 h-16 rounded-full flex items-center justify-center mx-auto mb-4 text-3xl"><Icon c="💡"/></div><h2 className="text-2xl font-black uppercase">Idea Lab</h2><p className="text-slate-500 text-sm">Pilih jenis konten & masukkan niche Anda.</p></div>
-                                    <div className="flex flex-wrap justify-center gap-2">{contentTypes.map(t=><button key={t} onClick={()=>setIdeaType(t)} className={`px-4 py-2 rounded-full text-[10px] font-black uppercase border ${ideaType===t?'bg-slate-900 text-white dark:bg-white dark:text-slate-900 scale-105':'bg-white dark:bg-slate-800 text-slate-500'}`}>{t}</button>)}</div>
-                                    <div className="flex gap-2 bg-white dark:bg-slate-900 p-2 rounded-3xl border shadow-lg max-w-md mx-auto"><input value={ideaInput} onChange={e=>setIdeaInput(e.target.value)} placeholder="Niche: Bisnis Kopi, Parenting..." className="flex-1 bg-transparent px-4 text-sm font-bold outline-none"/><button onClick={()=>{setIsGenerating(true); setGeneratedHooks([]); callAI(`5 ide unik "${ideaType}" tentang niche "${ideaInput}". Output JSON ARRAY: [{"topic":"Judul","angle":"Angle"}]`).then(res=>{if(res) setGeneratedHooks(res); setIsGenerating(false)})}} className="bg-blue-600 text-white px-6 rounded-2xl font-black text-xs uppercase">Cari</button></div>
-                                    <div className="grid gap-4 text-left max-w-md mx-auto">{generatedHooks.map((idea, i)=><div key={i} className="bg-white dark:bg-slate-900 p-5 rounded-3xl border shadow-sm hover:border-blue-400 cursor-pointer group" onClick={()=>{setFormData({...formData, topic:idea.topic}); setActiveTab('generator')}}><div><div className="text-[9px] font-black bg-slate-100 dark:bg-slate-800 inline-block px-2 py-1 rounded-full mb-2 uppercase">{ideaType}</div><h4 className="font-bold text-sm mb-1 group-hover:text-blue-600 uppercase">{idea.topic}</h4><p className="text-slate-400 text-xs">{idea.angle}</p></div></div>)}</div>
-                                </div>
-                            )}
-
-                            {/* TAB KOLEKSI, PERSONA, JADWAL (Code Similar to previous but consistent UI) */}
-                            {activeTab === 'koleksi' && (
-                                <div className="space-y-4 animate-fade-in">
-                                    <div className="relative"><span className="absolute left-4 top-3.5 text-slate-400"><Icon c="🔍"/></span><input value={searchSaved} onChange={e=>setSearchSaved(e.target.value)} placeholder="Cari koleksi..." className="w-full pl-10 pr-4 py-3 rounded-2xl border dark:bg-slate-900 outline-none text-sm"/></div>
-                                    {savedHooks.filter(h=>h.text.toLowerCase().includes(searchSaved)).map(h=>(<div key={h.id} className="bg-white dark:bg-slate-900 p-5 rounded-3xl border shadow-sm"><div className="flex justify-between items-start mb-2"><span className="text-[10px] font-black bg-slate-100 px-2 py-1 rounded uppercase">{h.category}</span><button onClick={()=>setSavedHooks(savedHooks.filter(sh=>sh.id!==h.id))}><Icon c="🗑️"/></button></div><p className="font-medium italic text-sm mb-3">"{h.text}"</p><div className="flex gap-2 items-center bg-slate-50 dark:bg-slate-800 p-2 rounded-xl"><Icon c="📅"/><input type="date" value={h.scheduledDate||''} onChange={e=>setSavedHooks(savedHooks.map(sh=>sh.id===h.id?{...sh, scheduledDate:e.target.value}:sh))} className="bg-transparent text-xs font-bold outline-none"/></div></div>))}
-                                </div>
-                            )}
-                        </main>
-
-                        {/* --- MAGIC REMIX MODAL (RESTORED) --- */}
-                        {remixModal.isOpen && (
-                            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-                                <div className="bg-white dark:bg-slate-900 w-full max-w-lg p-6 rounded-3xl shadow-2xl border dark:border-slate-800">
-                                    <div className="flex justify-between items-center mb-4"><h3 className="font-black text-lg flex items-center gap-2"><Icon c="🔀"/> Magic Remix</h3><button onClick={()=>setRemixModal({isOpen:false, hook:''})}><Icon c="❌"/></button></div>
-                                    <div className="bg-slate-50 dark:bg-slate-800 p-4 rounded-xl text-sm italic mb-6 border dark:border-slate-700">"{remixModal.hook}"</div>
-                                    <p className="text-[10px] font-bold text-slate-400 mb-2 uppercase">PILIH GAYA REMIX</p>
-                                    <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
-                                        {remixStyles.map(style => (
-                                            <button key={style} onClick={()=>{setRemixModal({isOpen:false, hook:''}); handleFeature('Remix', remixModal.hook, style)}} className="p-3 border rounded-xl text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-left">{style}</button>
-                                        ))}
+                        {/* TAB JADWAL */}
+                        {activeTab === 'jadwal' && (
+                            <div className="animate-fade-in space-y-4">
+                                <div className="relative mb-6"><span className="absolute left-3 top-3 text-slate-400"><Icon c="🔍"/></span><input value={searchCalendar} onChange={e=>setSearchCalendar(e.target.value)} placeholder="Cari jadwal..." className="w-full pl-10 pr-4 py-3 rounded-2xl border dark:bg-slate-900 outline-none text-sm"/></div>
+                                {filteredCalendar.length === 0 ? <div className="text-center py-20 opacity-30 text-4xl grayscale">📅</div> : filteredCalendar.sort((a,b)=>new Date(a.scheduledDate)-new Date(b.scheduledDate)).map(h=>(
+                                    <div key={h.id} className="bg-white dark:bg-slate-900 p-4 rounded-3xl border flex items-center gap-5 hover:border-blue-300 transition-all">
+                                        <div className="bg-slate-100 dark:bg-slate-800 p-3 rounded-2xl text-center min-w-[70px] shadow-inner">
+                                            <div className="text-[10px] font-black text-slate-400 uppercase">{new Date(h.scheduledDate).toLocaleString('id', {month:'short'})}</div>
+                                            <div className="text-2xl font-black tracking-tighter text-slate-900 dark:text-white">{new Date(h.scheduledDate).getDate()}</div>
+                                        </div>
+                                        <div className="flex-1"><span className="text-[9px] font-black bg-blue-50 dark:bg-blue-900/30 text-blue-600 px-2 py-0.5 rounded-full uppercase">{h.category}</span><p className="text-sm font-bold italic line-clamp-2 mt-1">"{h.text}"</p></div>
                                     </div>
-                                </div>
+                                ))}
                             </div>
                         )}
 
-                        {/* --- GENERIC CONTENT MODAL (Expand, Carousel, Analysis, Visual) --- */}
-                        {modal.isOpen && (
-                            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-                                <div className="bg-white dark:bg-slate-900 w-full max-w-2xl p-6 rounded-3xl shadow-2xl flex flex-col max-h-[85vh] border dark:border-slate-800">
-                                    <div className="flex justify-between items-center mb-4"><h3 className="font-black text-lg flex items-center gap-2"><Icon c="✨"/> {modal.title}</h3><button onClick={()=>setModal({...modal, isOpen:false})}><Icon c="❌"/></button></div>
-                                    <div className="overflow-y-auto custom-scrollbar flex-1 bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl border dark:border-slate-800">
-                                        {modal.loading ? <div className="text-center py-10 text-slate-400 animate-pulse font-bold">SEDANG MENULIS...</div> : <div className="whitespace-pre-line text-sm font-medium leading-relaxed">{modal.content}</div>}
+                        {/* TAB FAQ */}
+                        {activeTab === 'faq' && (
+                            <div className="animate-fade-in space-y-3">
+                                <div className="relative mb-6"><span className="absolute left-4 top-3.5 text-slate-400"><Icon c="🔍"/></span><input value={searchFAQ} onChange={e=>setSearchFAQ(e.target.value)} placeholder="Cari pertanyaan..." className="w-full pl-11 pr-4 py-3.5 rounded-2xl border dark:bg-slate-900 outline-none shadow-sm text-sm"/></div>
+                                {faqFiltered.map((f, i) => (
+                                    <div key={i} className="bg-white dark:bg-slate-900 border rounded-3xl overflow-hidden shadow-sm transition-all hover:shadow-md">
+                                        <button onClick={() => setOpenFaqIndex(openFaqIndex === i ? null : i)} className="w-full p-5 text-left font-black text-xs uppercase tracking-wide flex justify-between items-center transition-colors"><span>{f.q}</span><Icon c={openFaqIndex === i ? '🔼' : '🔽'}/></button>
+                                        <div className={`faq-content ${openFaqIndex === i ? 'open' : ''} px-5 pb-5 text-sm text-slate-500 font-medium leading-relaxed border-t dark:border-slate-800 pt-4`}>{f.a}</div>
                                     </div>
-                                    <div className="pt-4 flex justify-end"><button onClick={()=>navigator.clipboard.writeText(modal.content)} className="bg-slate-900 dark:bg-blue-600 text-white px-5 py-2.5 rounded-xl font-bold text-xs uppercase shadow-lg hover:opacity-90">Copy Result</button></div>
-                                </div>
+                                ))}
                             </div>
                         )}
+                    </main>
 
-                        {/* QUICK SAVE PERSONA MODAL */}
-                        {quickSaveModal && (
-                            <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
-                                <div className="bg-white dark:bg-slate-900 w-full max-w-sm p-6 rounded-3xl shadow-2xl text-center border dark:border-slate-800">
-                                    <div className="text-4xl mb-4 grayscale opacity-30 mx-auto"><Icon c="💾"/></div>
-                                    <h3 className="font-black text-lg mb-2 uppercase">Simpan Persona</h3>
-                                    <form onSubmit={(e)=>{e.preventDefault(); const name = e.target.pName.value; setSavedPersonas([{id:Date.now(), name, ...formData}, ...savedPersonas]); setQuickSaveModal(false);}} className="space-y-4">
-                                        <input name="pName" placeholder="Nama Profil..." className="w-full p-4 border rounded-2xl dark:bg-slate-800 text-center font-bold outline-none" autoFocus required />
-                                        <div className="flex gap-2"><button type="button" onClick={()=>setQuickSaveModal(false)} className="flex-1 py-3 bg-slate-100 rounded-2xl font-bold text-xs">BATAL</button><button type="submit" className="flex-1 py-3 bg-blue-600 text-white rounded-2xl font-bold text-xs">SIMPAN</button></div>
-                                    </form>
+                    {/* --- MAGIC REMIX MODAL --- */}
+                    {remixModal.isOpen && (
+                        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+                            <div className="bg-white dark:bg-slate-900 w-full max-w-lg p-6 rounded-3xl shadow-2xl border dark:border-slate-800">
+                                <div className="flex justify-between items-center mb-4"><h3 className="font-black text-lg flex items-center gap-2 uppercase"><Icon c="🔀"/> Magic Remix</h3><button onClick={()=>setRemixModal({isOpen:false, hook:''})}><Icon c="❌"/></button></div>
+                                <div className="bg-slate-50 dark:bg-slate-800 p-4 rounded-xl text-sm italic mb-6 border dark:border-slate-700">"{remixModal.hook}"</div>
+                                <p className="text-[10px] font-bold text-slate-400 mb-2 uppercase">PILIH GAYA REMIX</p>
+                                <div className="grid grid-cols-2 md:grid-cols-3 gap-2">
+                                    {remixStyles.map(style => (
+                                        <button key={style} onClick={()=>{setRemixModal({isOpen:false, hook:''}); handleFeature('Remix', remixModal.hook, style)}} className="p-3 border rounded-xl text-xs font-bold hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors text-left">{style}</button>
+                                    ))}
                                 </div>
                             </div>
-                        )}
+                        </div>
+                    )}
 
-                    </div>
+                    {/* --- GENERIC CONTENT MODAL (Expand, Carousel, Analysis, Visual) --- */}
+                    {modal.isOpen && (
+                        <div className="fixed inset-0 z-[70] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+                            <div className="bg-white dark:bg-slate-900 w-full max-w-2xl p-6 rounded-3xl shadow-2xl flex flex-col max-h-[85vh] border dark:border-slate-800">
+                                <div className="flex justify-between items-center mb-4"><h3 className="font-black text-lg flex items-center gap-2 uppercase"><Icon c="✨"/> {modal.title}</h3><button onClick={()=>setModal({...modal, isOpen:false})}><Icon c="❌"/></button></div>
+                                <div className="overflow-y-auto custom-scrollbar flex-1 bg-slate-50 dark:bg-slate-950 p-4 rounded-2xl border dark:border-slate-800">
+                                    {modal.loading ? <div className="text-center py-10 text-slate-400 animate-pulse font-bold">SEDANG MENULIS...</div> : <div className="whitespace-pre-line text-sm font-medium leading-relaxed">{modal.content}</div>}
+                                </div>
+                                <div className="pt-4 flex justify-end"><button onClick={()=>navigator.clipboard.writeText(modal.content)} className="bg-slate-900 dark:bg-blue-600 text-white px-5 py-2.5 rounded-xl font-bold text-xs uppercase shadow-lg hover:opacity-90">Copy Result</button></div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* QUICK SAVE PERSONA MODAL */}
+                    {quickSaveModal && (
+                        <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+                            <div className="bg-white dark:bg-slate-900 w-full max-w-sm p-6 rounded-3xl shadow-2xl text-center border dark:border-slate-800">
+                                <div className="text-4xl mb-4 grayscale opacity-30 mx-auto"><Icon c="💾"/></div>
+                                <h3 className="font-black text-lg mb-2 uppercase tracking-tighter">Simpan Persona Baru</h3>
+                                <p className="text-xs font-bold text-slate-400 mb-5">Detail form generator saat ini akan disimpan sebagai profil persona.</p>
+                                <form onSubmit={(e)=>{e.preventDefault(); const name = e.target.pName.value; setSavedPersonas([{id:Date.now(), name, ...formData}, ...savedPersonas]); setQuickSaveModal(false);}} className="space-y-4">
+                                    <input name="pName" placeholder="Nama Profil (Cth: Klien Skincare)" className="w-full p-4 border rounded-2xl dark:bg-slate-800 text-center font-black uppercase text-xs tracking-widest outline-none focus:ring-2 ring-blue-500 transition-all shadow-inner" autoFocus required />
+                                    <div className="flex gap-2">
+                                        <button type="button" onClick={() => setQuickSaveModal(false)} className="flex-1 py-3 bg-slate-50 dark:bg-slate-800 rounded-2xl font-black text-[10px] uppercase tracking-widest">BATAL</button>
+                                        <button type="submit" className="flex-1 py-3 bg-blue-600 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest shadow-lg shadow-blue-500/30">SIMPAN</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    )}
+
                 </div>
             );
         }
